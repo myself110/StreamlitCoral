@@ -32,3 +32,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Test and development files
+timelapse_creator_testbed.py
