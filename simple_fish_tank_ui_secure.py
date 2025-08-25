@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import json
 from pathlib import Path
 import pandas as pd
 import plotly.express as px
@@ -13,7 +14,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables from .env file (for local development)
+# In Streamlit Cloud, use st.secrets instead
 load_dotenv()
 
 # Configure logging
@@ -56,28 +58,35 @@ def find_timelapse_videos():
     try:
         logger.info("🔍 Starting root folder video search...")
         
-        # Configuration - Root folder ID that contains domain folders
-        ROOT_FOLDER_ID = os.getenv('GOOGLE_DRIVE_ROOT_FOLDER_ID')
-        
-        # Validate required environment variable
-        if not ROOT_FOLDER_ID:
-            logger.error("❌ GOOGLE_DRIVE_ROOT_FOLDER_ID environment variable not set")
-            st.error("❌ Google Drive configuration missing: GOOGLE_DRIVE_ROOT_FOLDER_ID not set")
+        # Configuration - Root folder ID from Streamlit secrets
+        try:
+            ROOT_FOLDER_ID = st.secrets["GOOGLE_DRIVE"]["root_folder_id"]
+        except KeyError:
+            logger.error("❌ GOOGLE_DRIVE.root_folder_id not found in Streamlit secrets")
+            st.error("❌ Google Drive configuration missing: root_folder_id not set in Streamlit secrets")
             st.stop()
         
-        # Load service account credentials
-        logger.info("📋 Loading service account credentials...")
-        service_account_path = os.getenv('SERVICE_ACCOUNT_PATH', 'service_account.json')
+        # Load service account credentials from Streamlit secrets
+        logger.info("📋 Loading service account credentials from Streamlit secrets...")
         
-        if not os.path.exists(service_account_path):
-            logger.error(f"❌ Service account file not found: {service_account_path}")
-            st.error(f"❌ Service account file not found: {service_account_path}")
-            st.stop()
+        try:
+            # Get service account JSON from Streamlit secrets
+            service_account_json = st.secrets["GOOGLE_DRIVE"]["service_account_json"]
+            service_account_info = json.loads(service_account_json)
             
-        creds = service_account.Credentials.from_service_account_file(
-            service_account_path, 
-            scopes=['https://www.googleapis.com/auth/drive']
-        )
+            creds = service_account.Credentials.from_service_account_info(
+                service_account_info,
+                scopes=['https://www.googleapis.com/auth/drive']
+            )
+            logger.info("✅ Service account credentials loaded from Streamlit secrets")
+        except KeyError:
+            logger.error("❌ GOOGLE_DRIVE.service_account_json not found in Streamlit secrets")
+            st.error("❌ Service account configuration missing in Streamlit secrets")
+            st.stop()
+        except json.JSONDecodeError:
+            logger.error("❌ Invalid JSON in service account secrets")
+            st.error("❌ Invalid service account configuration in Streamlit secrets")
+            st.stop()
         logger.info(f"✅ Credentials loaded for: {creds.service_account_email}")
         
         # Build Drive service
@@ -399,20 +408,19 @@ with st.expander("🔍 Debug Information", expanded=False):
     st.markdown("**📊 System Information:**")
     st.write(f"• **Current Directory:** `{os.getcwd()}`")
     
-    # Get service account path from environment
-    service_account_path = os.getenv('SERVICE_ACCOUNT_PATH', 'service_account.json')
-    st.write(f"• **Service Account File Exists:** {'✅' if os.path.exists(service_account_path) else '❌'}")
-    
-    # Show service account details if file exists
-    if os.path.exists(service_account_path):
-        try:
-            import json
-            with open('service_account.json', 'r') as f:
-                sa_data = json.load(f)
-            st.write(f"• **Project ID:** `{sa_data.get('project_id', 'N/A')}`")
-            st.write(f"• **Client Email:** `{sa_data.get('client_email', 'N/A')}`")
-        except Exception as e:
-            st.write(f"• **Service Account Error:** {e}")
+    # Check if service account secrets are available
+    try:
+        service_account_json = st.secrets["GOOGLE_DRIVE"]["service_account_json"]
+        service_account_info = json.loads(service_account_json)
+        st.write(f"• **Service Account Secrets:** ✅ Available")
+        st.write(f"• **Project ID:** `{service_account_info.get('project_id', 'N/A')}`")
+        st.write(f"• **Client Email:** `{service_account_info.get('client_email', 'N/A')}`")
+    except KeyError:
+        st.write(f"• **Service Account Secrets:** ❌ Not configured")
+    except json.JSONDecodeError:
+        st.write(f"• **Service Account Secrets:** ❌ Invalid JSON")
+    except Exception as e:
+        st.write(f"• **Service Account Error:** {e}")
     
     st.markdown("**📋 File List:**")
     try:
@@ -479,19 +487,25 @@ with col2:
     drive_connected = False
     
     try:
-        # Check if service account file exists
-        service_account_path = os.getenv('SERVICE_ACCOUNT_PATH', 'service_account.json')
-        if not os.path.exists(service_account_path):
-            logger.error(f"❌ Service account file not found: {service_account_path}")
+        # Check if service account secrets are available
+        try:
+            service_account_json = st.secrets["GOOGLE_DRIVE"]["service_account_json"]
+            service_account_info = json.loads(service_account_json)
+            logger.info("✅ Service account secrets loaded from Streamlit")
+        except KeyError:
+            logger.error("❌ GOOGLE_DRIVE.service_account_json not found in Streamlit secrets")
             drive_connected = False
-        else:
-            logger.info(f"✅ Service account file exists: {service_account_path}")
+            raise Exception("Service account secrets not configured")
+        except json.JSONDecodeError:
+            logger.error("❌ Invalid JSON in service account secrets")
+            drive_connected = False
+            raise Exception("Invalid service account configuration")
         
         # Test connection
         logger.info("🔐 Testing Google Drive connection...")
         
-        creds = service_account.Credentials.from_service_account_file(
-            service_account_path, 
+        creds = service_account.Credentials.from_service_account_info(
+            service_account_info,
             scopes=['https://www.googleapis.com/auth/drive']
         )
         logger.info(f"✅ Service account loaded: {creds.service_account_email}")
@@ -513,8 +527,11 @@ with col2:
         logger.info(f"✅ API access successful - found {files_found} accessible files")
         drive_connected = True
         
-    except FileNotFoundError:
-        error_msg = f"Service account file not found: {service_account_path}"
+    except Exception as e:
+        if "Service account secrets not configured" in str(e) or "Invalid service account configuration" in str(e):
+            error_msg = str(e)
+        else:
+            error_msg = f"Google Drive connection failed: {e}"
         logger.error(f"❌ {error_msg}")
         drive_connected = False
         
