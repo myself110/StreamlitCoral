@@ -1,6 +1,5 @@
 import streamlit as st
 import os
-import json
 from pathlib import Path
 import pandas as pd
 import plotly.express as px
@@ -12,11 +11,6 @@ from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from dotenv import load_dotenv
-
-# Load environment variables from .env file (for local development)
-# In Streamlit Cloud, use st.secrets instead
-load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,64 +23,40 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS to match the image colors
+# Custom CSS for compact single-window layout (no colored boxes)
 st.markdown("""
 <style>
-.top-left-section {
-    background-color: #f4e4bc;
-    padding: 20px;
-    border-radius: 10px;
-    margin: 10px;
+/* Remove default Streamlit margins and spacing */
+.main .block-container {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+    padding-left: 0.25rem;
+    padding-right: 0.25rem;
 }
-.top-right-section {
-    background-color: #b3d9ff;
-    padding: 20px;
-    border-radius: 10px;
-    margin: 10px;
-}
-.bottom-section {
-    background-color: #b3ffb3;
-    padding: 20px;
-    border-radius: 10px;
-    margin: 10px;
+
+/* Ensure no scrolling */
+body {
+    overflow: hidden;
 }
 </style>
 """, unsafe_allow_html=True)
+
+
 
 # Function to find timelapse videos in Google Drive starting from root folder
 def find_timelapse_videos():
     try:
         logger.info("🔍 Starting root folder video search...")
         
-        # Configuration - Root folder ID from Streamlit secrets
-        try:
-            ROOT_FOLDER_ID = st.secrets["GOOGLE_DRIVE"]["root_folder_id"]
-        except KeyError:
-            logger.error("❌ GOOGLE_DRIVE.root_folder_id not found in Streamlit secrets")
-            st.error("❌ Google Drive configuration missing: root_folder_id not set in Streamlit secrets")
-            st.stop()
+        # Configuration - Root folder ID that contains domain folders
+        ROOT_FOLDER_ID = "0AHKUF31V4DyLUk9PVA"
         
-        # Load service account credentials from Streamlit secrets
-        logger.info("📋 Loading service account credentials from Streamlit secrets...")
-        
-        try:
-            # Get service account JSON from Streamlit secrets
-            service_account_json = st.secrets["GOOGLE_DRIVE"]["service_account_json"]
-            service_account_info = json.loads(service_account_json)
-            
-            creds = service_account.Credentials.from_service_account_info(
-                service_account_info,
-                scopes=['https://www.googleapis.com/auth/drive']
-            )
-            logger.info("✅ Service account credentials loaded from Streamlit secrets")
-        except KeyError:
-            logger.error("❌ GOOGLE_DRIVE.service_account_json not found in Streamlit secrets")
-            st.error("❌ Service account configuration missing in Streamlit secrets")
-            st.stop()
-        except json.JSONDecodeError:
-            logger.error("❌ Invalid JSON in service account secrets")
-            st.error("❌ Invalid service account configuration in Streamlit secrets")
-            st.stop()
+        # Load service account credentials
+        logger.info("📋 Loading service account credentials...")
+        creds = service_account.Credentials.from_service_account_file(
+            'service_account.json', 
+            scopes=['https://www.googleapis.com/auth/drive']
+        )
         logger.info(f"✅ Credentials loaded for: {creds.service_account_email}")
         
         # Build Drive service
@@ -112,7 +82,6 @@ def find_timelapse_videos():
             # Get root folder info
             root_info = service.files().get(
                 fileId=ROOT_FOLDER_ID, 
-                fields="id, name, mimeType",
                 supportsAllDrives=True
             ).execute()
             logger.info(f"✅ Root folder accessible: {root_info['name']}")
@@ -250,7 +219,7 @@ def find_timelapse_videos():
         logger.error(error_msg)
         st.error(f"❌ {error_msg}")
         st.error("🔧 **Troubleshooting steps:**")
-        st.error("• Check if service account file exists and is valid")
+        st.error("• Check if service_account.json exists and is valid")
         st.error("• Verify Google Drive API is enabled in Google Cloud Console")
         st.error("• Ensure service account has proper permissions")
         st.error("• Verify folder structure: Domain → cam1 → timelapse")
@@ -304,6 +273,8 @@ def get_video_stream_url(service, file_id):
         logger.error(error_msg)
         st.error(f"❌ {error_msg}")
         return None
+
+
 
 # Initialize session state for data
 if 'sensor_data' not in st.session_state:
@@ -400,112 +371,39 @@ if time_diff >= 5:  # Add new data point every 5 seconds
         update_sensor_data()
     st.session_state.last_refresh = current_time
 
-# Title
-st.title("🐠 Fish Tank Monitor")
 
-# Debug information section
-with st.expander("🔍 Debug Information", expanded=False):
-    st.markdown("**📊 System Information:**")
-    st.write(f"• **Current Directory:** `{os.getcwd()}`")
-    
-    # Check if service account secrets are available
-    try:
-        service_account_json = st.secrets["GOOGLE_DRIVE"]["service_account_json"]
-        service_account_info = json.loads(service_account_json)
-        st.write(f"• **Service Account Secrets:** ✅ Available")
-        st.write(f"• **Project ID:** `{service_account_info.get('project_id', 'N/A')}`")
-        st.write(f"• **Client Email:** `{service_account_info.get('client_email', 'N/A')}`")
-    except KeyError:
-        st.write(f"• **Service Account Secrets:** ❌ Not configured")
-    except json.JSONDecodeError:
-        st.write(f"• **Service Account Secrets:** ❌ Invalid JSON")
-    except Exception as e:
-        st.write(f"• **Service Account Error:** {e}")
-    
-    st.markdown("**📋 File List:**")
-    try:
-        files = os.listdir('.')
-        for file in sorted(files):
-            st.write(f"• `{file}`")
-    except Exception as e:
-        st.write(f"Error listing files: {e}")
 
-# Add refresh button and status
-col_status, col_refresh = st.columns([3, 1])
-with col_status:
-    st.markdown(f"**🔄 Last updated:** {st.session_state.last_refresh.strftime('%H:%M:%S')}")
-    st.markdown(f"**📊 Data points:** {len(st.session_state.sensor_data['temperature'])}")
-    
-    # Add progress bar showing data collection progress
-    progress_value = min(len(st.session_state.sensor_data['temperature']) / 50.0, 1.0)
-    st.progress(progress_value, text=f"Data Collection: {len(st.session_state.sensor_data['temperature'])}/50 points")
-    
-    # Show current sensor values in real-time
-    if st.session_state.sensor_data['temperature']:
-        current_temp = st.session_state.sensor_data['temperature'][-1]
-        current_light = st.session_state.sensor_data['light'][-1]
-        current_ph = st.session_state.sensor_data['ph'][-1]
-        
-        st.markdown("**📈 Live Values:**")
-        st.markdown(f"🌡️ **{current_temp:.1f}°C** | 💡 **{current_light:.0f} lux** | 🧪 **{current_ph:.2f} pH**")
-    
-    # Add auto-refresh indicator
-    st.markdown("🔄 **Data updates every 5 seconds** - Graphs will show new data points!")
-
-with col_refresh:
-    if st.button("🔄 Add Data"):
-        for _ in range(5):  # Add 5 new data points when button is clicked
-            update_sensor_data()
-        st.session_state.last_refresh = datetime.now()
-        st.rerun()
-    
-    # Show next update countdown
-    if 'last_refresh' in st.session_state:
-        time_until_next = 5 - (datetime.now() - st.session_state.last_refresh).total_seconds()
-        if time_until_next > 0:
-            st.markdown(f"⏱️ **Next update in:** {time_until_next:.1f}s")
-
-# Top section with two columns
+# TOP HALF: Two columns for Logging and Video (50% of screen)
 col1, col2 = st.columns(2)
 
-# Top-Left Section (Beige/Yellow) - Logging Fish Tank Information
+# Top-Left Section - Logging Fish Tank Information
 with col1:
-    st.markdown('<div class="top-left-section">', unsafe_allow_html=True)
-    st.markdown("### Logging Fish Tank Information (LOGGED INFORMATION)")
+    st.markdown("### 📝 Fish Tank Logging")
     st.markdown("• Salinity")
     st.markdown("• Water Change (Date)")
     st.markdown("• Fish dead?")
     st.markdown("• Fish Tank Cleaned")
-    st.markdown('</div>', unsafe_allow_html=True)
 
-# Top-Right Section (Light Blue) - Time Lapse Video Playing
+# Top-Right Section - Time Lapse Video Playing
 with col2:
-    st.markdown('<div class="top-right-section">', unsafe_allow_html=True)
-    st.markdown("### Time Lapse Video Playing")
+    st.markdown("### 🎬 Time Lapse Video")
     
     # Show Google Drive connection status
     drive_connected = False
     
     try:
-        # Check if service account secrets are available
-        try:
-            service_account_json = st.secrets["GOOGLE_DRIVE"]["service_account_json"]
-            service_account_info = json.loads(service_account_json)
-            logger.info("✅ Service account secrets loaded from Streamlit")
-        except KeyError:
-            logger.error("❌ GOOGLE_DRIVE.service_account_json not found in Streamlit secrets")
+        # Check if service account file exists
+        if not os.path.exists('service_account.json'):
+            logger.error("❌ service_account.json file not found")
             drive_connected = False
-            raise Exception("Service account secrets not configured")
-        except json.JSONDecodeError:
-            logger.error("❌ Invalid JSON in service account secrets")
-            drive_connected = False
-            raise Exception("Invalid service account configuration")
+        else:
+            logger.info("✅ service_account.json file exists")
         
         # Test connection
         logger.info("🔐 Testing Google Drive connection...")
         
-        creds = service_account.Credentials.from_service_account_info(
-            service_account_info,
+        creds = service_account.Credentials.from_service_account_file(
+            'service_account.json', 
             scopes=['https://www.googleapis.com/auth/drive']
         )
         logger.info(f"✅ Service account loaded: {creds.service_account_email}")
@@ -527,11 +425,8 @@ with col2:
         logger.info(f"✅ API access successful - found {files_found} accessible files")
         drive_connected = True
         
-    except Exception as e:
-        if "Service account secrets not configured" in str(e) or "Invalid service account configuration" in str(e):
-            error_msg = str(e)
-        else:
-            error_msg = f"Google Drive connection failed: {e}"
+    except FileNotFoundError:
+        error_msg = "service_account.json file not found"
         logger.error(f"❌ {error_msg}")
         drive_connected = False
         
@@ -575,7 +470,7 @@ with col2:
                         <iframe 
                             src="{embed_url}" 
                             width="100%" 
-                            height="400" 
+                            height="450" 
                             frameborder="0" 
                             allowfullscreen>
                         </iframe>
@@ -605,35 +500,10 @@ with col2:
     else:
         logger.warning("📹 Google Drive not connected")
     
-    st.markdown('</div>', unsafe_allow_html=True)
+# BOTTOM HALF: Sensor Information & Graphs
+st.markdown("### 📊 Sensor Information & Graphs")
 
-# Bottom Section (Light Green) - Sensor Information (GRAPH)
-st.markdown('<div class="bottom-section">', unsafe_allow_html=True)
-st.markdown("### Sensor Information (GRAPH)")
 
-# Create three columns for current sensor values
-col_temp, col_light, col_ph = st.columns(3)
-
-with col_temp:
-    if st.session_state.sensor_data['temperature']:
-        current_temp = st.session_state.sensor_data['temperature'][-1]
-        st.metric("🌡️ Temperature", f"{current_temp:.1f}°C", f"{current_temp - 25.0:.1f}°C")
-    else:
-        st.metric("🌡️ Temperature", "N/A", "N/A")
-
-with col_light:
-    if st.session_state.sensor_data['light']:
-        current_light = st.session_state.sensor_data['light'][-1]
-        st.metric("💡 Light Level", f"{current_light:.0f} lux", f"{current_light - 800:.0f} lux")
-    else:
-        st.metric("💡 Light Level", "N/A", "N/A")
-
-with col_ph:
-    if st.session_state.sensor_data['ph']:
-        current_ph = st.session_state.sensor_data['ph'][-1]
-        st.metric("🧪 pH Level", f"{current_ph:.2f}", f"{current_ph - 7.2:.2f}")
-    else:
-        st.metric("🧪 pH Level", "N/A", "N/A")
 
 # Create animated charts
 if len(st.session_state.sensor_data['timestamps']) > 1:
@@ -645,83 +515,35 @@ if len(st.session_state.sensor_data['timestamps']) > 1:
         'pH': st.session_state.sensor_data['ph']
     })
     
-    # Create two rows of charts - 2 charts per row
-    # Row 1: Temperature and Light charts side by side
-    col_temp_chart, col_light_chart = st.columns(2)
+    # Create charts layout: All 3 charts in one row
+    col_temp_chart, col_light_chart, col_ph_chart = st.columns(3)
     
     with col_temp_chart:
-        st.markdown("**🌡️ Temperature Over Time**")
+        st.markdown("**🌡️ Temperature**")
         fig_temp = px.line(df, x='Time', y='Temperature', 
-                           title="Temperature Monitoring",
+                           title="",
                            color_discrete_sequence=['#ff6b6b'])
-        fig_temp.update_layout(height=250, showlegend=False, margin=dict(l=0, r=0, t=30, b=0))
+        fig_temp.update_layout(height=200, showlegend=False, margin=dict(l=0, r=0, t=15, b=0))
         fig_temp.update_traces(line=dict(width=3))
         st.plotly_chart(fig_temp, use_container_width=True)
     
     with col_light_chart:
-        st.markdown("**💡 Light Level Over Time**")
+        st.markdown("**💡 Light Level**")
         fig_light = px.line(df, x='Time', y='Light', 
-                            title="Light Sensor Monitoring",
+                            title="",
                             color_discrete_sequence=['#ffd93d'])
-        fig_light.update_layout(height=250, showlegend=False, margin=dict(l=0, r=0, t=30, b=0))
+        fig_light.update_layout(height=200, showlegend=False, margin=dict(l=0, r=0, t=15, b=0))
         fig_light.update_traces(line=dict(width=3))
         st.plotly_chart(fig_light, use_container_width=True)
     
-    # Row 2: pH and Combined charts side by side
-    col_ph_chart, col_combined_chart = st.columns(2)
-    
     with col_ph_chart:
-        st.markdown("**🧪 pH Level Over Time**")
+        st.markdown("**🧪 pH Level**")
         fig_ph = px.line(df, x='Time', y='pH', 
-                         title="pH Monitoring",
+                         title="",
                          color_discrete_sequence=['#6bcf7f'])
-        fig_ph.update_layout(height=250, showlegend=False, margin=dict(l=0, r=0, t=30, b=0))
+        fig_ph.update_layout(height=200, showlegend=False, margin=dict(l=0, r=0, t=15, b=0))
         fig_ph.update_traces(line=dict(width=3))
         st.plotly_chart(fig_ph, use_container_width=True)
-    
-    with col_combined_chart:
-        st.markdown("**📊 Combined Sensor Data**")
-        fig_combined = go.Figure()
-        
-        fig_combined.add_trace(go.Scatter(
-            x=df['Time'], y=df['Temperature'],
-            mode='lines', name='Temperature (°C)',
-            line=dict(color='#ff6b6b', width=2)
-        ))
-        
-        fig_combined.add_trace(go.Scatter(
-            x=df['Time'], y=df['Light']/100,  # Scale light down for visibility
-            mode='lines', name='Light (lux/100)',
-            line=dict(color='#ffd93d', width=2)
-        ))
-        
-        fig_combined.add_trace(go.Scatter(
-            x=df['Time'], y=df['pH']*10,  # Scale pH up for visibility
-            mode='lines', name='pH × 10',
-            line=dict(color='#6bcf7f', width=2)
-        ))
-        
-        fig_combined.update_layout(
-            title="Combined Sensor Monitoring",
-            height=250,
-            xaxis_title="Time",
-            yaxis_title="Sensor Values (Scaled)",
-            hovermode='x unified',
-            showlegend=True,
-            margin=dict(l=0, r=0, t=30, b=0)
-        )
-        
-        st.plotly_chart(fig_combined, use_container_width=True)
 
 else:
     st.info("📊 Collecting sensor data... Charts will appear after a few data points.")
-
-# Explanation of how data updates work
-st.markdown("---")
-st.markdown("**💡 How it works:**")
-st.markdown("• **Automatic updates:** New data points are added every 5 seconds")
-st.markdown("• **Manual updates:** Click 'Add Data' button to add 5 data points instantly")
-st.markdown("• **Graph animation:** Charts automatically show new data as it's added")
-st.markdown("• **No page refresh:** Only the graph data updates, not the entire page")
-
-st.markdown('</div>', unsafe_allow_html=True)
